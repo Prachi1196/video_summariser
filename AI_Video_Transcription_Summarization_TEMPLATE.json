@@ -1,0 +1,1629 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "AI Video Transcription & Summary",
+        "formDescription": "Paste a YouTube URL <b>or</b> upload an MP4 video (max 25 MB). Provide one of the two. You will get the full transcript, a concise summary and key points.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "YouTube URL",
+              "fieldName": "youtubeUrl",
+              "placeholder": "https://www.youtube.com/watch?v=..."
+            },
+            {
+              "fieldLabel": "Video",
+              "fieldType": "file",
+              "fieldName": "video",
+              "multipleFiles": false,
+              "acceptFileTypes": ".mp4"
+            }
+          ]
+        },
+        "options": {
+          "buttonLabel": "Transcribe & Summarize",
+          "path": "video-summary"
+        }
+      },
+      "id": "97b651ec-6a84-407d-b8bd-86d7dce235dd",
+      "name": "Upload Video Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        928,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Decides the input type (youtube | upload) and validates it.\n// Never throws: invalid input becomes { status: 'error', error } so the user sees a clear message.\nconst item = $input.first();\nconst binary = item.binary || {};\nconst keys = Object.keys(binary);\nconst url = String(item.json.youtubeUrl || item.json['YouTube URL'] || '').trim();\nconst fail = (msg, extra) => [{ json: Object.assign({ status: 'error', sourceType: 'invalid', title: '', source: url || 'No input', transcript: '', error: msg }, extra || {}) }];\n\nif (url && keys.length) {\n  return fail('Please provide either a YouTube URL or an MP4 video, not both.');\n}\nif (!url && !keys.length) {\n  return fail('No input received. Paste a YouTube URL or upload an MP4 video.');\n}\n\nif (url) {\n  if (!/^(https?:\\/\\/)?((www|m|music)\\.)?(youtube\\.com|youtu\\.be)\\//i.test(url)) {\n    return fail('That does not look like a YouTube link. Use a URL like https://www.youtube.com/watch?v=VIDEO_ID or https://youtu.be/VIDEO_ID');\n  }\n  const patterns = [\n    /[?&]v=([A-Za-z0-9_-]{11})/,\n    /youtu\\.be\\/([A-Za-z0-9_-]{11})/,\n    /\\/(?:shorts|embed|live|v)\\/([A-Za-z0-9_-]{11})/,\n  ];\n  let videoId = '';\n  for (const p of patterns) {\n    const m = url.match(p);\n    if (m) { videoId = m[1]; break; }\n  }\n  if (!videoId) {\n    return fail('Could not find a video ID in that YouTube URL. Make sure it links to a single video, not a channel or playlist.');\n  }\n  return [{ json: {\n    status: 'ok',\n    sourceType: 'youtube',\n    videoId: videoId,\n    youtubeUrl: 'https://www.youtube.com/watch?v=' + videoId,\n    source: 'https://www.youtube.com/watch?v=' + videoId,\n  } }];\n}\n\n// Uploaded file\nconst key = keys[0];\nconst file = binary[key];\nconst fileName = file.fileName || 'video.mp4';\nconst mime = String(file.mimeType || '').toLowerCase();\nif (!fileName.toLowerCase().endsWith('.mp4') && mime !== 'video/mp4') {\n  return fail('Unsupported file format (' + (mime || fileName) + '). Please upload an MP4 video.', { source: fileName });\n}\nconst buffer = await this.helpers.getBinaryDataBuffer(0, key);\nconst sizeMb = buffer.length / (1024 * 1024);\nif (buffer.length === 0) {\n  return fail('The uploaded file is empty.', { source: fileName });\n}\nif (sizeMb > 25) {\n  return fail('The video is ' + sizeMb.toFixed(1) + ' MB. The maximum is 25 MB (speech-to-text API limit). Trim or compress it and try again.', { source: fileName });\n}\nreturn [{\n  json: { status: 'ok', sourceType: 'upload', fileName: fileName, source: fileName, sizeMb: Number(sizeMb.toFixed(2)) },\n  binary: { audio: Object.assign({}, file, { fileName: fileName, mimeType: 'video/mp4' }) },\n}];"
+      },
+      "id": "4cfcaa80-8ed8-4f35-b69b-fbbb3d032dd0",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-youtube",
+              "leftValue": "={{ $json.sourceType }}",
+              "rightValue": "youtube",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0ce79cec-0bb7-44a7-ba3d-4c93e6bd33f2",
+      "name": "Is YouTube URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1184,
+        816
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.youtube.com/oembed",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.youtubeUrl }}"
+            },
+            {
+              "name": "format",
+              "value": "json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "49dd863f-d09c-4c2f-9f80-cd6eb8eda8cf",
+      "name": "Get Video Details (oEmbed)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1488,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Free YouTube oEmbed lookup: gives the title and detects private / removed videos\n// before spending transcript-API credits.\nconst input = $('Validate Input').first().json;\nconst res = $input.first().json;\nconst code = Number(res.statusCode || 0);\nlet body = res.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }\nconst base = { sourceType: 'youtube', videoId: input.videoId, youtubeUrl: input.youtubeUrl, source: input.youtubeUrl, transcript: '' };\nif (code === 200 && body && body.title) {\n  return [{ json: Object.assign(base, { status: 'ok', title: body.title, author: body.author_name || '' }) }];\n}\nlet error = 'Could not look up this YouTube video (HTTP ' + (code || 'no response') + ').';\nif (code === 401 || code === 403) error = 'This video is private or embedding is restricted, so its captions cannot be retrieved.';\nif (code === 404 || code === 400) error = 'Video not found. It may have been removed, or the URL/video ID is wrong.';\nif (code === 429) error = 'YouTube is rate limiting requests. Please wait a minute and try again.';\nreturn [{ json: Object.assign(base, { status: 'error', title: '', error: error }) }];"
+      },
+      "id": "d873e9a7-a2f1-4993-ab68-f2c16875ec80",
+      "name": "Check Video Access",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "accessible",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1403263c-595b-4d84-b02c-5f3caddacf6d",
+      "name": "Video Accessible?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2304,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.supadata.ai/v1/transcript",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpTemplatedCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.youtubeUrl }}"
+            },
+            {
+              "name": "text",
+              "value": "true"
+            },
+            {
+              "name": "mode",
+              "value": "native"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "7b3fd878-f729-4e83-90ca-a897de9f8262",
+      "name": "Fetch YouTube Transcript (Supadata)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2528,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Maps the Supadata response (or an upstream access error) to the shared shape:\n// { status, sourceType, title, source, transcript, error }\nconst meta = $('Check Video Access').first().json;\nconst res = $input.first().json;\nconst out = (status, transcript, error) => [{ json: {\n  status: status, sourceType: 'youtube', title: meta.title || ('YouTube video ' + meta.videoId), source: meta.youtubeUrl,\n  transcript: transcript, error: error || '',\n} }];\n// False branch of \"Video Accessible?\": pass the error through\nif (res.statusCode === undefined && res.status === 'error') {\n  return out('error', '', res.error);\n}\nconst code = Number(res.statusCode || 0);\nlet body = res.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = { content: body }; } }\nbody = body || {};\nconst apiMsg = body.message || body.details || body.error || '';\nif (code === 200) {\n  let text = body.content;\n  if (Array.isArray(text)) text = text.map(c => c.text || '').join(' ');\n  text = String(text || '').replace(/\\[(music|applause|laughter)\\]/gi, ' ').replace(/\\s+/g, ' ').trim();\n  if (!text) return out('error', '', 'This video has no captions/subtitles available, so no transcript could be retrieved. Try uploading the video as an MP4 instead.');\n  return out('ok', text, '');\n}\nif (code === 202 || body.jobId) return out('error', '', 'The transcript service queued this video as a background job. Please try again in a minute.');\nif (code === 206) return out('error', '', 'No captions/subtitles are available for this video. Try uploading the video as an MP4 instead.');\nif (code === 401) return out('error', '', 'Transcript API key is missing or invalid. Check the Supadata credential in n8n.');\nif (code === 402) return out('error', '', 'Your Supadata plan does not allow this request (payment required / credits used up).');\nif (code === 403) return out('error', '', 'This video is private or restricted, so its captions are not accessible.');\nif (code === 404) return out('error', '', 'Video or transcript not found.');\nif (code === 429) return out('error', '', 'Transcript API rate limit or monthly quota reached. Please wait and try again later.');\nreturn out('error', '', 'Transcript API error (HTTP ' + (code || 'no response') + ')' + (apiMsg ? ': ' + apiMsg : '.'));"
+      },
+      "id": "611cd8f2-de16-4ac9-bd4a-3bfcb3a4dd99",
+      "name": "Normalize YouTube Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2752,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "status-ok",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "23d09d79-0fcc-4832-9bab-e3bf518ab951",
+      "name": "Has Transcript?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2336,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gemini has a large context window, so chunks are big. Very long transcripts are split\n// at sentence/word boundaries, each chunk summarized, then the section summaries merged.\nconst text = String($input.first().json.transcript || '').trim();\nconst MAX = 120000;      // ~30k tokens per chunk\nconst MAX_CHUNKS = 10;   // ~1.2M characters, many hours of speech\nconst chunks = [];\nlet rest = text;\nwhile (rest.length > MAX) {\n  let cut = rest.lastIndexOf('. ', MAX);\n  if (cut < MAX * 0.5) cut = rest.lastIndexOf(' ', MAX);\n  cut = cut < MAX * 0.5 ? MAX : cut + 1;\n  chunks.push(rest.slice(0, cut).trim());\n  rest = rest.slice(cut).trim();\n}\nif (rest) chunks.push(rest);\nconst used = chunks.slice(0, MAX_CHUNKS);\nreturn used.map((chunk, index) => ({ json: {\n  chunk: chunk,\n  index: index,\n  totalChunks: used.length,\n  truncated: chunks.length > MAX_CHUNKS,\n} }));"
+      },
+      "id": "1b9700b7-03fd-460e-adb9-9c554124784b",
+      "name": "Split Transcript Into Chunks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2608,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-3.5-flash",
+          "cachedResultName": "Gemini 3.5 Flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Video title: {{ $('Has Transcript?').first().json.title }}\nThis is section {{ $json.index + 1 }} of {{ $json.totalChunks }} of the transcript.\n\nReturn ONLY valid JSON (no Markdown fences) with this exact shape:\n{\"summary\": \"a concise 3-6 sentence summary\", \"mainPoints\": [\"5-8 main points\"], \"keyTakeaways\": [\"3-5 actionable key takeaways\"]}\n\nTranscript:\n{{ $json.chunk }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "includeMergedResponse": true,
+          "systemMessage": "You summarize YouTube video transcripts accurately. Use only information in the transcript. Write in the same language as the transcript.",
+          "maxOutputTokens": 8192,
+          "temperature": 0.3
+        }
+      },
+      "id": "155daa6d-d9b0-4fe9-9422-fa33fa2f31f3",
+      "name": "Summarize Chunks (Gemini)",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        2832,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collects one Gemini summary per transcript section and explains failures in plain language.\nconst getText = (j) => {\n  if (!j) return '';\n  if (typeof j.mergedResponse === 'string' && j.mergedResponse.trim()) return j.mergedResponse;\n  const c = j.content;\n  if (c && Array.isArray(c.parts)) return c.parts.map(x => x.text || '').join('');\n  if (Array.isArray(c)) return c.map(x => (x.parts || []).map(y => y.text || '').join('') || x.text || '').join('');\n  if (typeof c === 'string') return c;\n  if (Array.isArray(j.candidates) && j.candidates[0] && j.candidates[0].content) return (j.candidates[0].content.parts || []).map(x => x.text || '').join('');\n  return String(j.text || j.output || j.response || '');\n};\nconst parseJson = (t) => {\n  let x = String(t || '').trim().replace(/^\\x60{3}(?:json)?\\s*/i, '').replace(/\\x60{3}\\s*$/, '').trim();\n  const a = x.indexOf('{'), b = x.lastIndexOf('}');\n  if (a >= 0 && b > a) {\n    try {\n      const o = JSON.parse(x.slice(a, b + 1));\n      return { summary: String(o.summary || ''), mainPoints: Array.isArray(o.mainPoints) ? o.mainPoints.map(String) : [], keyTakeaways: Array.isArray(o.keyTakeaways) ? o.keyTakeaways.map(String) : [] };\n    } catch (e) {}\n  }\n  return { summary: x, mainPoints: [], keyTakeaways: [] };\n};\nconst describe = (msg) => {\n  msg = String(msg || '');\n  if (/API key|401|403|permission|unauthori|credential/i.test(msg)) return 'Gemini rejected the API credential. Check the Google Gemini credential in n8n.';\n  if (/429|quota|rate|exhausted|credits/i.test(msg)) return 'Gemini quota or rate limit reached. Please wait a minute and try again.';\n  if (/503|overloaded|unavailable/i.test(msg)) return 'Gemini is temporarily overloaded. Please try again in a minute.';\n  if (/safety|blocked/i.test(msg)) return 'Gemini blocked this content for safety reasons, so no summary could be produced.';\n  if (/timeout|ETIMEDOUT|ECONNRESET/i.test(msg)) return 'The Gemini request timed out. Please try again.';\n  return 'Summarization with Gemini failed: ' + msg;\n};\nconst items = $input.all();\nconst sections = [];\nconst errors = [];\nfor (const i of items) {\n  const j = i.json || {};\n  const t = getText(j);\n  if (t && t.trim()) sections.push(parseJson(t));\n  else if (j.error) errors.push(typeof j.error === 'string' ? j.error : (j.error.message || JSON.stringify(j.error)));\n  else errors.push('Empty response from Gemini.');\n}\nif (!sections.length) {\n  return [{ json: { status: 'error', error: describe(errors[0]), sections: [], combinedText: '', needsFinalPass: false } }];\n}\nconst combinedText = sections.map((x, n) => 'Section ' + (n + 1) + ' summary: ' + x.summary + '\\nMain points: ' + x.mainPoints.join(' | ') + '\\nTakeaways: ' + x.keyTakeaways.join(' | ')).join('\\n\\n');\nreturn [{ json: {\n  status: 'ok',\n  error: '',\n  sections: sections,\n  combinedText: combinedText,\n  needsFinalPass: sections.length > 1,\n  failedChunks: errors.length,\n  totalChunks: items.length,\n} }];"
+      },
+      "id": "61dca71b-f4e0-4f95-87d0-1b78d0876d20",
+      "name": "Combine Chunk Summaries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3056,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "final-pass",
+              "leftValue": "={{ $json.needsFinalPass }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "53ddc842-fbf0-49dd-9b52-2da43b079abd",
+      "name": "Multiple Chunks?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3280,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-3.5-flash",
+          "cachedResultName": "Gemini 3.5 Flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Video title: {{ $('Has Transcript?').first().json.title }}\nBelow are summaries of consecutive sections of one long video. Merge them into one overall result.\n\nReturn ONLY valid JSON (no Markdown fences) with this exact shape:\n{\"summary\": \"a concise 5-8 sentence summary of the whole video\", \"mainPoints\": [\"6-10 main points\"], \"keyTakeaways\": [\"3-6 actionable key takeaways\"]}\n\n{{ $json.combinedText }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "includeMergedResponse": true,
+          "systemMessage": "You summarize YouTube video transcripts accurately. Use only information in the transcript. Write in the same language as the transcript.",
+          "maxOutputTokens": 8192,
+          "temperature": 0.3
+        }
+      },
+      "id": "e890e0c3-99a0-4db6-a5a4-c0fba088cf40",
+      "name": "Condense Combined Summary (Gemini)",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        3632,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Produces the final summary, main points, key takeaways and the HTML result page.\nconst getText = (j) => {\n  if (!j) return '';\n  if (typeof j.mergedResponse === 'string' && j.mergedResponse.trim()) return j.mergedResponse;\n  const c = j.content;\n  if (c && Array.isArray(c.parts)) return c.parts.map(x => x.text || '').join('');\n  if (Array.isArray(c)) return c.map(x => (x.parts || []).map(y => y.text || '').join('') || x.text || '').join('');\n  if (typeof c === 'string') return c;\n  if (Array.isArray(j.candidates) && j.candidates[0] && j.candidates[0].content) return (j.candidates[0].content.parts || []).map(x => x.text || '').join('');\n  return String(j.text || j.output || j.response || '');\n};\nconst parseJson = (t) => {\n  let x = String(t || '').trim().replace(/^\\x60{3}(?:json)?\\s*/i, '').replace(/\\x60{3}\\s*$/, '').trim();\n  const a = x.indexOf('{'), b = x.lastIndexOf('}');\n  if (a >= 0 && b > a) {\n    try {\n      const o = JSON.parse(x.slice(a, b + 1));\n      return { summary: String(o.summary || ''), mainPoints: Array.isArray(o.mainPoints) ? o.mainPoints.map(String) : [], keyTakeaways: Array.isArray(o.keyTakeaways) ? o.keyTakeaways.map(String) : [] };\n    } catch (e) {}\n  }\n  return { summary: x, mainPoints: [], keyTakeaways: [] };\n};\nconst describe = (msg) => {\n  msg = String(msg || '');\n  if (/API key|401|403|permission|unauthori|credential/i.test(msg)) return 'Gemini rejected the API credential. Check the Google Gemini credential in n8n.';\n  if (/429|quota|rate|exhausted|credits/i.test(msg)) return 'Gemini quota or rate limit reached. Please wait a minute and try again.';\n  if (/503|overloaded|unavailable/i.test(msg)) return 'Gemini is temporarily overloaded. Please try again in a minute.';\n  if (/safety|blocked/i.test(msg)) return 'Gemini blocked this content for safety reasons, so no summary could be produced.';\n  if (/timeout|ETIMEDOUT|ECONNRESET/i.test(msg)) return 'The Gemini request timed out. Please try again.';\n  return 'Summarization with Gemini failed: ' + msg;\n};\nconst meta = $('Has Transcript?').first().json;\nconst comb = $('Combine Chunk Summaries').first().json;\nconst chunkInfo = $('Split Transcript Into Chunks').first().json;\nconst transcript = String(meta.transcript || '');\nconst base = { title: meta.title || '', source: meta.source || '', sourceType: meta.sourceType, transcript: transcript };\nif (comb.status !== 'ok') {\n  return [{ json: Object.assign(base, { status: 'error', error: comb.error }) }];\n}\nconst warnings = [];\nlet result = comb.sections[0];\nif (comb.needsFinalPass) {\n  const t = getText($input.first().json);\n  if (t && t.trim()) result = parseJson(t);\n  else {\n    warnings.push('The final merging step failed, so the summary combines the section summaries.');\n    result = {\n      summary: comb.sections.map(x => x.summary).join(' '),\n      mainPoints: [].concat(...comb.sections.map(x => x.mainPoints)).slice(0, 10),\n      keyTakeaways: [].concat(...comb.sections.map(x => x.keyTakeaways)).slice(0, 6),\n    };\n  }\n}\nif (comb.failedChunks) warnings.push(comb.failedChunks + ' of ' + comb.totalChunks + ' transcript sections could not be summarized.');\nif (chunkInfo.truncated) warnings.push('The transcript was extremely long; only the first ~1.2 million characters were summarized.');\nconst summary = result.summary || 'No summary returned.';\nconst points = result.mainPoints || [];\nconst takeaways = result.keyTakeaways || [];\nconst summaryText = 'Summary: ' + summary + '\\n\\nMain points:\\n' + points.map(p => '- ' + p).join('\\n') + '\\n\\nKey takeaways:\\n' + takeaways.map(p => '- ' + p).join('\\n');\n\nconst esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\nconst status = warnings.length ? 'Completed with warnings' : 'Completed successfully';\nconst html = [\n  '<div style=\"text-align:left\">',\n  '<h2>' + esc(base.title || 'Video') + '</h2>',\n  '<p><b>Source:</b> ' + esc(base.source) + '<br><b>Status:</b> ' + esc(status) + '</p>',\n  warnings.length ? '<p style=\"color:#b45309\"><b>Notes:</b> ' + esc(warnings.join(' ')) + '</p>' : '',\n  '<h3>Summary</h3><p>' + esc(summary) + '</p>',\n  '<h3>Main points</h3><ul>' + points.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>',\n  '<h3>Key takeaways</h3><ul>' + takeaways.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>',\n  '<h3>Full transcript</h3><p style=\"white-space:pre-wrap\">' + esc(transcript) + '</p>',\n  '</div>',\n].join('');\nreturn [{ json: Object.assign(base, { status: 'ok', processingStatus: status, warnings: warnings, summary: summary, keyPoints: points, keyTakeaways: takeaways, summaryText: summaryText, resultHtml: html, error: '' }) }];"
+      },
+      "id": "4b4a0e0b-3793-4b1c-8d78-fa4a685e7acf",
+      "name": "Build Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3728,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "from-telegram",
+              "leftValue": "={{ $(\"Telegram Trigger\").isExecuted }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "268b2cdd-104d-4cef-b12f-305b29010b12",
+      "name": "Reply in Telegram?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3088,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "tg-summary-ok",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9e063ca7-33cd-42d1-a7b6-f66f899f3390",
+      "name": "Telegram Summary Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3360,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "N5hNjMg91NGnnqSB",
+          "cachedResultName": "telegram_video_context"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "chat_id",
+              "keyValue": "={{ String($(\"Telegram Trigger\").first().json.message.chat.id) }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chat_id": "={{ String($(\"Telegram Trigger\").first().json.message.chat.id) }}",
+            "video_key": "={{ $json.source + \" @ \" + $now.toISO() }}",
+            "title": "={{ $json.title }}",
+            "source": "={{ $json.source }}",
+            "summary": "={{ $json.summaryText || $json.summary }}",
+            "transcript": "={{ String($json.transcript || \"\").slice(0, 200000) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "chat_id",
+              "displayName": "chat_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "video_key",
+              "displayName": "video_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "transcript",
+              "displayName": "transcript",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "05d67a88-dce2-47ec-bed8-03a72a4e71f9",
+      "name": "Save Video Context",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3584,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Telegram allows 4,096 characters per message, so long text is split into several messages.\nconst r = $('Telegram Summary Ready?').first().json;\nconst chatId = $('Telegram Trigger').first().json.message.chat.id;\nconst LIMIT = 3500; // leaves room for headings and HTML escaping\nconst MAX_TRANSCRIPT_MESSAGES = 12; // about 40,000 characters; avoids flooding the chat\nconst esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst splitText = (text) => {\n  const parts = [];\n  let rest = String(text || '').trim();\n  while (rest.length > LIMIT) {\n    let cut = rest.lastIndexOf('. ', LIMIT);\n    if (cut < LIMIT * 0.5) cut = rest.lastIndexOf(' ', LIMIT);\n    cut = cut < LIMIT * 0.5 ? LIMIT : cut + 1;\n    parts.push(rest.slice(0, cut).trim());\n    rest = rest.slice(cut).trim();\n  }\n  if (rest) parts.push(rest);\n  return parts;\n};\nconst messages = [];\nconst header = '<b>' + esc(r.title || 'Your video') + '</b>\\nSource: ' + esc(r.source) + '\\nStatus: ' + esc(r.processingStatus || 'Completed') + ((r.warnings || []).length ? '\\nNote: ' + esc(r.warnings.join(' ')) : '');\nconst summaryParts = splitText(r.summary);\nmessages.push(header + '\\n\\n<b>Summary</b>\\n' + esc(summaryParts[0] || ''));\nsummaryParts.slice(1).forEach(p => messages.push(esc(p)));\nconst points = (r.keyPoints || []).map((p, i) => (i + 1) + '. ' + p).join('\\n');\nsplitText(points).forEach((p, i) => messages.push((i === 0 ? '<b>Main points</b>\\n' : '') + esc(p)));\nconst takeaways = (r.keyTakeaways || []).map((p, i) => (i + 1) + '. ' + p).join('\\n');\nif (takeaways) splitText(takeaways).forEach((p, i) => messages.push((i === 0 ? '<b>Key takeaways</b>\\n' : '') + esc(p)));\nconst transcriptParts = splitText(r.transcript);\nconst shown = transcriptParts.slice(0, MAX_TRANSCRIPT_MESSAGES);\nshown.forEach((p, i) => messages.push('<b>Transcript (' + (i + 1) + '/' + shown.length + ')</b>\\n' + esc(p)));\nif (transcriptParts.length > shown.length) {\n  messages.push('The transcript is very long, so only the first ' + shown.length + ' parts were sent here. The summary and your questions still use the full transcript.');\n}\nmessages.push('You can now ask me questions about this video. Just type your question. Send a new link or video at any time to switch videos.');\nreturn messages.map(text => ({ json: { chatId: chatId, text: text } }));"
+      },
+      "id": "c342cf4e-f988-4c81-870b-1e20f40a6994",
+      "name": "Split Into Telegram Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3584,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "51d0f854-281b-43bf-89b0-6c320b71c8dd",
+      "name": "Send Results to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3808,
+        512
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $(\"Telegram Trigger\").first().json.message.chat.id }}",
+        "text": "=Sorry, I could not process this video.\n\n{{ String($json.error || \"Something went wrong while transcribing or summarizing.\").replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\") }}\n\nYou can send another YouTube link or an MP4 video (up to 20 MB).",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "b3162b5d-feb6-4d26-877b-44f46881972b",
+      "name": "Send Error to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3584,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "summary-ok",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "630f933a-31cb-4415-8dd9-54bba79c2244",
+      "name": "Summary Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3360,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "showText",
+        "responseText": "={{ $json.resultHtml }}"
+      },
+      "id": "f748c93f-b9f8-41dc-88c3-7f45ce5c5082",
+      "name": "Show Transcript & Summary",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        3584,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "completionTitle": "Processing failed",
+        "completionMessage": "={{ $json.error || \"The video could not be processed. Please try again.\" }}{{ ($json.title || $json.source) ? \"  (Source: \" + ($json.title || $json.source) + \")\" : \"\" }}",
+        "options": {}
+      },
+      "id": "af5edfea-b3f7-45cf-b18a-5cb223d96ce8",
+      "name": "Show Error Message",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        3584,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-upload",
+              "leftValue": "={{ $json.sourceType }}",
+              "rightValue": "upload",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "752f4163-c590-4e7a-b9f9-85f78220e9dc",
+      "name": "Valid MP4 Upload?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1488,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "binaryPropertyName": "audio",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "b6a7bc53-30ea-4462-bb74-85722c3222d3",
+      "name": "Transcribe Speech (Whisper)",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        1712,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Maps the Whisper result (or an upstream validation error) to the shared shape.\nconst res = $input.first().json;\nconst fileName = String(res.fileName || $('Validate Input').first().json.fileName || 'Uploaded video');\nconst out = (status, transcript, error) => [{ json: {\n  status: status, sourceType: 'upload', title: fileName, source: 'Uploaded file: ' + fileName,\n  transcript: transcript, error: error || '',\n} }];\n// False branch of \"Valid MP4 Upload?\": validation error from Validate Input\nif (res.status === 'error') {\n  return [{ json: { status: 'error', sourceType: res.sourceType, title: res.title || '', source: res.source || '', transcript: '', error: res.error } }];\n}\nif (res.error) {\n  const msg = typeof res.error === 'string' ? res.error : (res.error.message || JSON.stringify(res.error));\n  let friendly = 'Speech-to-text failed: ' + msg;\n  if (/429|rate/i.test(msg)) friendly = 'The speech-to-text service is rate limited. Please wait a minute and try again.';\n  else if (/413|too large|size/i.test(msg)) friendly = 'The file is too large for the speech-to-text service (25 MB limit).';\n  else if (/format|decode|invalid file/i.test(msg)) friendly = 'The speech-to-text service could not read this MP4. It may be corrupted or use an unsupported codec.';\n  else if (/401|api key|credential|credit/i.test(msg)) friendly = 'The speech-to-text credential is invalid or out of credits. Check the OpenAI credential in n8n.';\n  return out('error', '', friendly);\n}\nconst text = String(res.text || '').replace(/\\s+/g, ' ').trim();\nif (text.split(' ').filter(Boolean).length < 3) {\n  return out('error', '', 'No speech was detected in this video, so there is nothing to summarize.');\n}\nreturn out('ok', text, '');"
+      },
+      "id": "48466e85-4e50-4912-b870-5976e39b97f2",
+      "name": "Normalize Upload Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1936,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "dd72f1b1-c35d-40d5-badf-c84393c24156",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        0,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Works out what the Telegram user sent: a link, an MP4 video, a question, or something we answer directly.\nconst msg = $input.first().json.message || {};\nconst chatId = msg.chat ? msg.chat.id : null;\nconst text = String(msg.text || msg.caption || '').trim();\nconst MAX_MB = 20; // Telegram bots cannot download files larger than 20 MB\nconst help = 'Hi! Send me a YouTube link or an MP4 video (up to 20 MB) and I will reply with the transcript and a summary. After that, just type any question about the video.';\nconst out = (route, extra) => [{ json: Object.assign({ route: route, chatId: chatId, text: text, replyText: '' }, extra || {}) }];\n\nlet file = null;\nif (msg.video) file = { fileId: msg.video.file_id, size: msg.video.file_size || 0, mime: msg.video.mime_type || 'video/mp4', name: msg.video.file_name || 'telegram-video.mp4' };\nelse if (msg.video_note) file = { fileId: msg.video_note.file_id, size: msg.video_note.file_size || 0, mime: 'video/mp4', name: 'video-note.mp4' };\nelse if (msg.document) file = { fileId: msg.document.file_id, size: msg.document.file_size || 0, mime: msg.document.mime_type || '', name: msg.document.file_name || '' };\n\nif (file) {\n  const isMp4 = String(file.mime).toLowerCase() === 'video/mp4' || /\\.mp4$/i.test(file.name);\n  if (!isMp4) {\n    return out('reply', { replyText: 'Sorry, I can only process MP4 videos. This file looks like ' + (file.mime || file.name || 'another format') + '. Please convert it to MP4, or send me a YouTube link instead.' });\n  }\n  const sizeMb = file.size / (1024 * 1024);\n  if (sizeMb > MAX_MB) {\n    return out('reply', { replyText: 'This video is ' + sizeMb.toFixed(1) + ' MB. Telegram bots can only download files up to 20 MB. Please trim or compress it, or upload it to YouTube and send me the link.' });\n  }\n  const name = /\\.mp4$/i.test(file.name) ? file.name : 'telegram-video.mp4';\n  return out('video', { fileId: file.fileId, fileName: name, sizeMb: Number(sizeMb.toFixed(2)) });\n}\n\nif (!text) return out('reply', { replyText: 'I can only read text, YouTube links and MP4 videos. ' + help });\nif (/^\\/(start|help)\\b/i.test(text)) return out('reply', { replyText: help });\n\nconst link = text.match(/https?:\\/\\/\\S+|(?:www\\.)?(?:youtube\\.com|youtu\\.be)\\/\\S+/i);\nif (link) return out('link', { youtubeUrl: link[0] });\n\nreturn out('question', { question: text });"
+      },
+      "id": "11faf743-8498-4e71-8bfe-365150c72e8a",
+      "name": "Classify Telegram Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "link",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Link"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "video",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Video"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "question",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Question"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "reply",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Direct reply"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1541d67-fd33-4275-94a9-0e1446d19e9a",
+      "name": "Route Telegram Message",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        496,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "Got it! Transcribing and summarizing your video now. This can take a minute or two...",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "8000fdad-6d38-4139-a1a0-6e59b36816ba",
+      "name": "Send Working Notice",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        912,
+        192
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.fileId }}",
+        "additionalFields": {
+          "mimeType": "video/mp4"
+        }
+      },
+      "id": "7f5cf521-38a4-4fe6-b0e9-67b2f385cb1b",
+      "name": "Download Telegram Video",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        912,
+        512
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $(\"Classify Telegram Message\").item.json.chatId }}",
+        "text": "={{ String(($(\"Classify Telegram Message\").item.json.route === \"reply\" ? $(\"Classify Telegram Message\").item.json.replyText : \"\") || \"Sorry, I could not download that video from Telegram. Bots can only download files up to 20 MB, so please send a smaller MP4 or a YouTube link.\").replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\") }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "6eedcc08-ebe2-40f7-8fbf-feb0fb922bc8",
+      "name": "Send Telegram Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1440,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "N5hNjMg91NGnnqSB",
+          "cachedResultName": "telegram_video_context"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "chat_id",
+              "keyValue": "={{ String($json.chatId) }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "5091de0e-cd11-46fc-8228-335d4140b3df",
+      "name": "Load Video Context",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        800,
+        1072
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-transcript",
+              "leftValue": "={{ $json.transcript }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "69401a41-2f60-445a-ac6a-86ab110dac48",
+      "name": "Has Video Context?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1024,
+        1072
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $(\"Classify Telegram Message\").item.json.question }}",
+        "options": {
+          "systemMessage": "=You answer a Telegram user's questions about ONE video. Use ONLY the video title, summary and transcript below. If the answer is not in them, say you could not find that in the video; do not fill gaps with general knowledge. Keep answers short (under 250 words), in plain text without Markdown, and reply in the language the user writes in.\n\nVideo title: {{ $json.title }}\nSource: {{ $json.source }}\n\nSummary:\n{{ $json.summary }}\n\nTranscript:\n{{ String($json.transcript || \"\").slice(0, 150000) }}",
+          "enableStreaming": false
+        }
+      },
+      "id": "9e2552e8-135a-49bc-9356-8691795637fe",
+      "name": "Answer Question About Video",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1248,
+        816
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash",
+        "options": {
+          "maxOutputTokens": 2048,
+          "temperature": 0.3
+        }
+      },
+      "id": "fd048c5e-e4eb-499a-bfc3-1ae7d795b8e2",
+      "name": "Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1264,
+        1008
+      ]
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $(\"Load Video Context\").item.json.chat_id }}|{{ $(\"Load Video Context\").item.json.video_key }}",
+        "contextWindowLength": 10
+      },
+      "id": "b326cd5b-71ac-497c-b5fb-514e4dc429ef",
+      "name": "Chat Memory (per Telegram chat)",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        1392,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $(\"Classify Telegram Message\").item.json.chatId }}",
+        "text": "={{ String($json.output || \"Sorry, I could not come up with an answer. Please try rephrasing your question.\").slice(0, 3800).replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\") }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "07f05176-0657-4b59-92ce-54238501d8c7",
+      "name": "Send Answer",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1600,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $(\"Classify Telegram Message\").item.json.chatId }}",
+        "text": "I do not have a video for this chat yet. Send me a YouTube link or an MP4 video (up to 20 MB) first, then ask your questions.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "bebffce2-3bea-4e91-bb99-6a667c8fd7ad",
+      "name": "Ask For Video First",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1312,
+        1216
+      ]
+    }
+  ],
+  "connections": {
+    "Upload Video Form": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Is YouTube URL?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is YouTube URL?": {
+      "main": [
+        [
+          {
+            "node": "Get Video Details (oEmbed)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Valid MP4 Upload?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Video Details (oEmbed)": {
+      "main": [
+        [
+          {
+            "node": "Check Video Access",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Video Access": {
+      "main": [
+        [
+          {
+            "node": "Video Accessible?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Video Accessible?": {
+      "main": [
+        [
+          {
+            "node": "Fetch YouTube Transcript (Supadata)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize YouTube Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch YouTube Transcript (Supadata)": {
+      "main": [
+        [
+          {
+            "node": "Normalize YouTube Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize YouTube Transcript": {
+      "main": [
+        [
+          {
+            "node": "Has Transcript?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Transcript?": {
+      "main": [
+        [
+          {
+            "node": "Split Transcript Into Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply in Telegram?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Transcript Into Chunks": {
+      "main": [
+        [
+          {
+            "node": "Summarize Chunks (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Chunks (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Combine Chunk Summaries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Chunk Summaries": {
+      "main": [
+        [
+          {
+            "node": "Multiple Chunks?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Multiple Chunks?": {
+      "main": [
+        [
+          {
+            "node": "Condense Combined Summary (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Condense Combined Summary (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Build Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Results": {
+      "main": [
+        [
+          {
+            "node": "Reply in Telegram?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply in Telegram?": {
+      "main": [
+        [
+          {
+            "node": "Telegram Summary Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Summary Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Summary Ready?": {
+      "main": [
+        [
+          {
+            "node": "Save Video Context",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split Into Telegram Messages",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Error to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Into Telegram Messages": {
+      "main": [
+        [
+          {
+            "node": "Send Results to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summary Ready?": {
+      "main": [
+        [
+          {
+            "node": "Show Transcript & Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Show Error Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid MP4 Upload?": {
+      "main": [
+        [
+          {
+            "node": "Transcribe Speech (Whisper)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Upload Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe Speech (Whisper)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Upload Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Upload Transcript": {
+      "main": [
+        [
+          {
+            "node": "Has Transcript?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Classify Telegram Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Telegram Message": {
+      "main": [
+        [
+          {
+            "node": "Route Telegram Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Telegram Message": {
+      "main": [
+        [
+          {
+            "node": "Send Working Notice",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Working Notice",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Download Telegram Video",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Video Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Telegram Video": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Video Context": {
+      "main": [
+        [
+          {
+            "node": "Has Video Context?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Video Context?": {
+      "main": [
+        [
+          {
+            "node": "Answer Question About Video",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ask For Video First",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Question About Video": {
+      "main": [
+        [
+          {
+            "node": "Send Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Answer Question About Video",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Memory (per Telegram chat)": {
+      "ai_memory": [
+        [
+          {
+            "node": "Answer Question About Video",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "nodeGroups": [
+    {
+      "id": "dc25d986-e5bc-4e4f-a663-5b5c1c333ae5",
+      "name": "Check submission",
+      "nodeIds": [
+        "4cfcaa80-8ed8-4f35-b69b-fbbb3d032dd0",
+        "0ce79cec-0bb7-44a7-ba3d-4c93e6bd33f2"
+      ],
+      "description": "Works out whether a YouTube link or an MP4 was sent and rejects empty, double, invalid or oversized input"
+    },
+    {
+      "id": "ef9de149-6cc3-4bfa-9c87-38977ab63211",
+      "name": "Get YouTube captions",
+      "nodeIds": [
+        "49dd863f-d09c-4c2f-9f80-cd6eb8eda8cf",
+        "d873e9a7-a2f1-4993-ab68-f2c16875ec80",
+        "1403263c-595b-4d84-b02c-5f3caddacf6d",
+        "7b3fd878-f729-4e83-90ca-a897de9f8262",
+        "611cd8f2-de16-4ac9-bd4a-3bfcb3a4dd99"
+      ],
+      "description": "Looks up the title, stops on private or missing videos, then pulls existing captions from a transcript service"
+    },
+    {
+      "id": "db855cc9-3628-4edb-81fc-0f92db7a6ffc",
+      "name": "Transcribe uploaded video",
+      "nodeIds": [
+        "752f4163-c590-4e7a-b9f9-85f78220e9dc",
+        "b6a7bc53-30ea-4462-bb74-85722c3222d3",
+        "48466e85-4e50-4912-b870-5976e39b97f2"
+      ],
+      "description": "Sends the MP4 to speech-to-text and flags silent videos or failed transcriptions"
+    },
+    {
+      "id": "bf69781b-3a3f-4d9b-8fbb-fba5a39d9d51",
+      "name": "Summarize transcript",
+      "nodeIds": [
+        "1b9700b7-03fd-460e-adb9-9c554124784b",
+        "155daa6d-d9b0-4fe9-9422-fa33fa2f31f3",
+        "61dca71b-f4e0-4f95-87d0-1b78d0876d20",
+        "53ddc842-fbf0-49dd-9b52-2da43b079abd",
+        "e890e0c3-99a0-4db6-a5a4-c0fba088cf40",
+        "4b4a0e0b-3793-4b1c-8d78-fa4a685e7acf"
+      ],
+      "description": "Gemini summarizes the transcript (in sections if very long) into a summary, main points and key takeaways"
+    },
+    {
+      "id": "0de120e9-b947-4257-921d-5783efdf476a",
+      "name": "Show result page",
+      "nodeIds": [
+        "630f933a-31cb-4415-8dd9-54bba79c2244",
+        "f748c93f-b9f8-41dc-88c3-7f45ce5c5082",
+        "af5edfea-b3f7-45cf-b18a-5cb223d96ce8"
+      ],
+      "description": "Displays the title, status, summary, key points and transcript, or a plain-language error"
+    },
+    {
+      "id": "df85e823-5ac7-46dd-be67-4ba1f29e2a6f",
+      "name": "Understand Telegram message",
+      "nodeIds": [
+        "11faf743-8498-4e71-8bfe-365150c72e8a",
+        "a1541d67-fd33-4275-94a9-0e1446d19e9a"
+      ],
+      "description": "Sorts each chat message into link, MP4, question or help, and blocks non-MP4 or over-20 MB files early"
+    },
+    {
+      "id": "482f2908-74ed-48b9-b23b-2d18fc86f20a",
+      "name": "Send result to Telegram",
+      "nodeIds": [
+        "9e063ca7-33cd-42d1-a7b6-f66f899f3390",
+        "05d67a88-dce2-47ec-bed8-03a72a4e71f9",
+        "c342cf4e-f988-4c81-870b-1e20f40a6994",
+        "51d0f854-281b-43bf-89b0-6c320b71c8dd",
+        "b3162b5d-feb6-4d26-877b-44f46881972b"
+      ],
+      "description": "Remembers the video for this chat, then posts summary, key points and transcript in several messages, or the error"
+    },
+    {
+      "id": "56161960-1653-48ab-a15a-21ee3b7dd696",
+      "name": "Answer follow-up questions",
+      "nodeIds": [
+        "5091de0e-cd11-46fc-8228-335d4140b3df",
+        "69401a41-2f60-445a-ac6a-86ab110dac48",
+        "9e2552e8-135a-49bc-9356-8691795637fe",
+        "fd048c5e-e4eb-499a-bfc3-1ae7d795b8e2",
+        "b326cd5b-71ac-497c-b5fb-514e4dc429ef",
+        "07f05176-0657-4b59-92ce-54238501d8c7",
+        "bebffce2-3bea-4e91-bb99-6a667c8fd7ad"
+      ],
+      "description": "Looks up the last video for this chat and answers only from its transcript and summary, keeping chat history"
+    }
+  ]
+}
