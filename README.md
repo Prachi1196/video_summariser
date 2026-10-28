@@ -1,5 +1,5 @@
 # AI Video Transcription and Summarization Telegram Chatbot
-
+[video](https://drive.google.com/file/d/1DzI9ai0sQvNcIeZCab9Nq2CCD5Rx1jGk/view?usp=sharing)
 ## About the Project
 This project is an AI-powered Telegram chatbot built using n8n and the Google Gemini API. It accepts YouTube video links, retrieves their transcripts, generates summaries, and allows users to ask follow-up questions about the video through Telegram.
 
